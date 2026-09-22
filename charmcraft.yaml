@@ -1,0 +1,38 @@
+type: charm
+name: hermes
+title: Hermes Agent
+summary: A persistent Hermes agent on a Juju-managed machine.
+description: |
+  Installs a pinned Hermes Agent release and runs its authenticated HTTP gateway
+  under systemd. Uses OpenRouter with credentials supplied through a Juju secret.
+  The initial charm supports one unit, with local persistent state and workspace.
+base: ubuntu@24.04
+platforms:
+  amd64:
+parts:
+  charm:
+    plugin: uv
+    source: .
+    build-snaps: [astral-uv]
+    build-packages: [python3-dev]
+peers:
+  peers:
+    interface: hermes_peer
+config:
+  options:
+    model:
+      type: string
+      default: z-ai/glm-5.3
+      description: OpenRouter model ID used for new agent sessions.
+    openrouter-secret:
+      type: secret
+      description: Juju secret URI containing the api-key field for OpenRouter.
+    max-turns:
+      type: int
+      default: 20
+      description: Maximum model/tool iterations per conversation turn (1-1000).
+actions:
+  get-api-access:
+    description: Return the loopback API URL and the Juju secret ID for its bearer token.
+  restart:
+    description: Reconcile configuration and restart Hermes. In-flight work may be interrupted.
