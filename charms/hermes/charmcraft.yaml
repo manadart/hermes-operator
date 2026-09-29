@@ -1,5 +1,5 @@
 type: charm
-name: hermes
+name: hermes-operator
 title: Hermes Agent
 summary: A persistent Hermes agent on a Juju-managed machine.
 description: |

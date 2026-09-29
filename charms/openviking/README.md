@@ -13,7 +13,15 @@ is root-owned under `/opt/openviking`.
 
 ## Build and deploy
 
-Run from `charms/openviking`:
+The published charm is [openviking](https://charmhub.io/openviking), available on
+`latest/edge` for Ubuntu 24.04 amd64. To install it from Charmhub:
+
+```sh
+juju deploy -m hermes:hermes-dev openviking --channel latest/edge --base ubuntu@24.04 \
+  --constraints 'arch=amd64 cores=2 mem=4G root-disk=20G'
+```
+
+For a local build, run from `charms/openviking` instead:
 
 ```sh
 uv sync --locked
@@ -21,7 +29,13 @@ uv run --locked pytest -q
 uv run --locked ruff check src tests
 charmcraft pack
 juju deploy -m hermes:hermes-dev ./openviking_amd64.charm \
-  --base ubuntu@24.04 --constraints 'cores=2 mem=4G root-disk=20G'
+  --base ubuntu@24.04 --constraints 'arch=amd64 cores=2 mem=4G root-disk=20G'
+```
+
+For either installation method, grant and configure the OpenRouter secret, then
+relate the applications:
+
+```sh
 juju grant-secret -m hermes:hermes-dev <openrouter-secret-id> openviking
 juju config -m hermes:hermes-dev openviking model-secret=<openrouter-secret-id>
 juju integrate -m hermes:hermes-dev hermes:context-store openviking:context

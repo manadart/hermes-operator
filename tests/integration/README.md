@@ -3,7 +3,7 @@
 Build each charm in its directory and deploy into a disposable/private model.
 Configure OpenRouter secrets and relate the applications as described in their
 READMEs. Both should reach active before testing. These commands use the
-development application `hermes-context`; substitute your own unit/model.
+development application `hermes`; substitute your own unit/model.
 
 The pinned workload source is
 `/opt/hermes/hermes-agent-345cd2b057a452236de401d3534b8502a7465e8d`.
@@ -12,11 +12,11 @@ then run it as `hermes` with that source's `.venv/bin/python`:
 
 ```sh
 juju scp -m hermes:hermes-dev tests/integration/context_smoke.py \
-  hermes-context/0:/tmp/context-smoke.py
-juju exec -m hermes:hermes-dev --unit hermes-context/0 -- \
+  hermes/0:/tmp/context-smoke.py
+juju exec -m hermes:hermes-dev --unit hermes/0 -- \
   install -m 755 /tmp/context-smoke.py /opt/hermes/context-smoke.py
 
-juju exec -m hermes:hermes-dev --unit hermes-context/0 -- \
+juju exec -m hermes:hermes-dev --unit hermes/0 -- \
   runuser -u hermes -- \
   /opt/hermes/hermes-agent-345cd2b057a452236de401d3534b8502a7465e8d/.venv/bin/python \
   /opt/hermes/context-smoke.py remember \

@@ -5,7 +5,12 @@ Development target: controller `hermes`, model `hermes-dev`, Juju
 `hermes-charm-builder` with Charmcraft 4.4.2. Both charm and workload installations
 use uv and committed dependency locks.
 
-## Deployed applications
+## Initial integration deployment (subsequently destroyed)
+
+The following records the initial integration run. The user subsequently
+requested a model reset; that fresh deployment is documented below. Its teardown
+removed these three applications, their machines and the test data referenced
+in this section.
 
 | Application | Charm revision | Workload | Machine | Purpose |
 | --- | --- | --- | --- | --- |
@@ -66,7 +71,50 @@ is `/var/lib/hermes/workspace/context-smoke.json` on `hermes-context/0`.
 The final successful gateway recall session was
 `context-recall-96d448a7a80f4a01a54dcd3b081cff11`. Both connected applications
 and the original agent were active at the end of testing. The packaging
-container was stopped; the workloads remain running.
+container was stopped. These workloads were subsequently removed by the requested
+model reset; the old report and session are historical evidence, not live paths.
+
+## Fresh model deployment later on 2026-09-29
+
+At the user's request, `hermes:hermes-dev` was gracefully destroyed, including
+all three workload machines and their agent/context data, then recreated on the
+same controller and LXD cloud. No force removal was needed.
+
+- Previous model UUID: `b30524d6-bfc4-4e54-82d1-fd45bdc5e4a4`.
+- New model UUID: `bd7c2210-885e-440c-8765-e9ce85767f79`.
+- Fresh applications: `hermes` and `openviking`, each local charm revision 0,
+  connected through `hermes:context-store` / `openviking:context`.
+- Machines: `juju-767f79-0` and `juju-767f79-1`, each Ubuntu 24.04 with 2 cores,
+  4 GiB memory and a 20 GiB root disk. Their private addresses are
+  `10.155.5.202` (Hermes) and `10.155.5.83` (OpenViking).
+- Packages were checked against all source files in commit `d21881d` before
+  deployment; no charm code changes were needed for this reset.
+- The existing user-owned OpenRouter key was transferred using a private
+  temporary file, imported into a new model-owned `openrouter` secret, verified,
+  and explicitly granted to both applications. The temporary credential file
+  was deleted. Charm-owned API and relation credentials were generated afresh.
+- Hermes retains model `z-ai/glm-5.3`, `max-turns=20`, and staged GitHub App IDs
+  `4245402` / `145176996`. There was no GitHub private-key secret configured to
+  transfer. The context identity now uses the normal new-model/application
+  default; old memories, skills and sessions were not restored.
+
+Both applications reached active with idle unit agents. Their `check-context`
+actions passed: Hermes reported context ID
+`38a68781-4dba-5b89-8b00-241eaf124200` and endpoint
+`http://10.155.5.83:1933`; OpenViking reported one authenticated client.
+The old `juju-c5e4a4-*` workload containers are absent, and the builder remains
+stopped. The controller and unrelated LXD instances were retained.
+
+A new synthetic Aurora Cedar fact was submitted through Hermes's bundled
+provider. Extraction task `c69bcc84-6ba4-4b6b-b3f8-661b1b007004` completed, and a
+fresh provider session found the exact random checklist code through semantic
+search and read at `viking://user/hermes/memories/entities/project/aurora_cedar.md`.
+The test also confirmed that the regular user cannot list accounts or request a
+full-server backup. The new report is
+`/var/lib/hermes/workspace/context-smoke.json` on `hermes/0`.
+This reset reran deployment, authentication, extraction and provider recall;
+the broader rotation, outage and gateway-chat checks above describe the initial
+integration run of the same charm code.
 
 ## Controller refresh limitation
 

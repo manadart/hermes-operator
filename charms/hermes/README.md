@@ -16,11 +16,23 @@ Requires a Juju controller supporting secrets, an Ubuntu 24.04 amd64 machine
 cloud, and outbound access to Ubuntu archives, GitHub, PyPI, and OpenRouter.
 Development uses controller `hermes` and model `hermes-dev`.
 
+The published charm is [hermes-operator](https://charmhub.io/hermes-operator),
+available on `latest/edge`. Deploy it with the application name `hermes` used
+throughout these instructions:
+
+```sh
+juju add-model --controller hermes hermes-dev  # only if the model does not exist
+juju deploy --model hermes:hermes-dev hermes-operator hermes \
+  --channel latest/edge --base ubuntu@24.04 \
+  --constraints 'arch=amd64 cores=2 mem=4G root-disk=20G'
+```
+
+For a local build, run from `charms/hermes`:
+
 ```sh
 charmcraft pack
-juju add-model --controller hermes hermes-dev  # only if the model does not exist
-juju deploy --model hermes:hermes-dev ./hermes_amd64.charm \
-  --base ubuntu@24.04 --constraints 'cores=2 mem=4G root-disk=20G'
+juju deploy --model hermes:hermes-dev ./hermes-operator_amd64.charm hermes \
+  --base ubuntu@24.04 --constraints 'arch=amd64 cores=2 mem=4G root-disk=20G'
 ```
 
 Initial installation downloads the workload and its dependencies. The unit then
@@ -247,7 +259,7 @@ lxc file push /tmp/hermes-charm-source.tar.gz hermes-charm-builder/root/
 lxc exec hermes-charm-builder -- mkdir -p /root/hermes-operator
 lxc exec hermes-charm-builder -- tar -xzf /root/hermes-charm-source.tar.gz -C /root/hermes-operator
 lxc exec hermes-charm-builder --cwd /root/hermes-operator -- charmcraft pack --destructive-mode
-lxc file pull hermes-charm-builder/root/hermes-operator/hermes_amd64.charm .
+lxc file pull hermes-charm-builder/root/hermes-operator/hermes-operator_amd64.charm .
 lxc stop hermes-charm-builder
 ```
 

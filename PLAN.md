@@ -141,8 +141,14 @@ recovery and attachable-storage requirements remain later work.
 
 ## 5. Restructure the repository
 
-**Implemented on 2026-09-29.** Separate build contexts preserve the Hermes charm
-name and workload paths. Existing Hermes tests and packaging passed after the move:
+**Implemented on 2026-09-29.** The move to separate build contexts preserved the
+Hermes charm name and workload paths. Existing tests and packaging passed.
+
+Later that day, Charmhub publication changed the Hermes package name to
+`hermes-operator` because `hermes` and `hermes-agent` were unavailable. Deployment
+examples explicitly retain `hermes` as the application name. The published pair
+is `hermes-operator` and `openviking` on `latest/edge`; see
+[publication details](docs/publishing.md).
 
 ```text
 charms/
@@ -157,18 +163,21 @@ PLAN.md
 ```
 
 Keep each charm's `charmcraft.yaml`, `pyproject.toml`, `uv.lock`, source, and unit
-tests together. Hermes-specific smoke tests remain with Hermes. Update build,
-test, and documentation paths while preserving the charm name and workload
-paths. Verify the existing Hermes tests and packaging after the move.
+tests together. Hermes-specific smoke tests remain with Hermes. Future build,
+test, and documentation changes should retain the published charm names and
+workload paths.
 
 ## 6. OpenViking charm and relation
 
 **Implemented and deployed on 2026-09-29.** OpenViking 0.4.22 is running with
-the new `hermes-context` development application in `hermes:hermes-dev`. The
-original `hermes` remains active at revision 4: this controller rejected adding
-the new endpoint during refresh, including a retry with an explicit binding.
-Existing Hermes persistence checks still pass. See [integration validation](docs/validation.md)
-for the controller error and measured integration results.
+Hermes in `hermes:hermes-dev`. The initial integration used a separate
+`hermes-context` application because the controller rejected adding the endpoint
+to the existing charm during refresh. Later that day, at the user's request,
+the model and its three workload machines were destroyed and the model recreated
+with fresh `hermes` and `openviking` applications. The OpenRouter credential was
+re-imported; previous agent and context data was deliberately discarded.
+See [integration validation](docs/validation.md) for the reset, controller error
+and measured integration results.
 
 The implemented interface uses isolated accounts, regular-user Juju secrets,
 stable context IDs, credential rotation, retained data on disconnect, and
