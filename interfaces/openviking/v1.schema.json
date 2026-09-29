@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hermes-operator:relation:openviking:v1",
+  "title": "OpenViking relation application data",
+  "$defs": {
+    "consumer": {
+      "type": "object",
+      "required": ["schema-version", "context-id"],
+      "properties": {
+        "schema-version": {"const": "1"},
+        "context-id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"}
+      },
+      "additionalProperties": false
+    },
+    "provider": {
+      "type": "object",
+      "required": ["schema-version", "context-id", "endpoint", "credentials", "account-id", "user-id", "server-version"],
+      "properties": {
+        "schema-version": {"const": "1"},
+        "context-id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+        "endpoint": {"type": "string", "pattern": "^https?://[^/@?#\\s]+/?$"},
+        "credentials": {"type": "string", "pattern": "^secret:"},
+        "account-id": {"type": "string", "pattern": "^ctx-[a-f0-9]{32}$"},
+        "user-id": {"const": "hermes"},
+        "server-version": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [{"$ref": "#/$defs/consumer"}, {"$ref": "#/$defs/provider"}]
+}

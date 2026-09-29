@@ -1,0 +1,8 @@
+[project]
+name = "openviking-workload"
+version = "0.4.22"
+requires-python = ">=3.12,<3.13"
+dependencies = ["openviking==0.4.22"]
+
+[tool.uv]
+package = false

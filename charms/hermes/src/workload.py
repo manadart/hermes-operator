@@ -16,6 +16,9 @@ from pathlib import Path
 
 import yaml
 
+from context import ContextConnection
+from github_app import GitHubApp
+
 VERSION = "0.21.3"
 COMMIT = "345cd2b057a452236de401d3534b8502a7465e8d"
 SOURCE_URL = f"https://codeload.github.com/NousResearch/hermes-agent/tar.gz/{COMMIT}"
@@ -60,26 +63,39 @@ def write_file(path: Path, content: str, *, uid: int = 0, gid: int = 0, mode: in
     return True
 
 
-def configuration(model: str, max_turns: int) -> str:
+def configuration(
+    model: str, max_turns: int, *, github_enabled: bool = False, context_enabled: bool = False
+) -> str:
     """Render only the settings owned by the initial charm."""
     toolsets = ["terminal", "file", "delegation", "memory", "session_search", "todo"]
-    return yaml.safe_dump(
-        {
-            "model": {"provider": "openrouter", "default": model},
-            "agent": {"max_turns": max_turns},
-            "terminal": {"backend": "local", "cwd": str(WORKSPACE)},
-            "platform_toolsets": {"cli": toolsets, "api_server": toolsets},
-            "platforms": {
-                "api_server": {"enabled": True, "extra": {"host": "127.0.0.1", "port": 8642}}
-            },
-            "delegation": {"max_concurrent_children": 2},
-            "kanban": {"dispatch_in_gateway": False},
+    terminal = {"backend": "local", "cwd": str(WORKSPACE)}
+    if github_enabled:
+        terminal["env_passthrough"] = ["GH_APP_ID", "GH_INSTALL_ID", "GH_APP_KEY"]
+        # The terminal's login shell can replace systemd's PATH before its snapshot.
+        terminal["shell_init_files"] = [
+            "~/.profile",
+            "~/.bash_profile",
+            "~/.bashrc",
+            str(INSTALL / "github-path.sh"),
+        ]
+    settings = {
+        "model": {"provider": "openrouter", "default": model},
+        "agent": {"max_turns": max_turns},
+        "terminal": terminal,
+        "platform_toolsets": {"cli": toolsets, "api_server": toolsets},
+        "platforms": {
+            "api_server": {"enabled": True, "extra": {"host": "127.0.0.1", "port": 8642}}
         },
-        sort_keys=False,
-    )
+        "delegation": {"max_concurrent_children": 2},
+        "kanban": {"dispatch_in_gateway": False},
+    }
+    if context_enabled:
+        settings["memory"] = {"provider": "openviking"}
+    return yaml.safe_dump(settings, sort_keys=False)
 
 
-def systemd_unit() -> str:
+def systemd_unit(*, github_enabled: bool = False) -> str:
+    github_path = f"{INSTALL}/bin:" if github_enabled else ""
     return f"""[Unit]
 Description=Hermes Agent gateway
 After=network-online.target
@@ -98,7 +114,7 @@ Environment=HERMES_SUPERVISED_CHILD=1
 Environment=HERMES_GATEWAY_NO_SUPERVISE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=VIRTUAL_ENV={SOURCE}/.venv
-Environment=PATH={SOURCE}/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH={github_path}{SOURCE}/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart={SOURCE}/.venv/bin/hermes gateway run
 Restart=on-failure
 RestartSec=5
@@ -235,25 +251,70 @@ class HermesWorkload:
         max_turns: int,
         provider_key: str,
         api_key: str,
+        github_app: GitHubApp | None = None,
+        context: ContextConnection | None = None,
         force_restart: bool = False,
     ) -> None:
         changed = self.ensure_state()
         account = pwd.getpwnam("hermes")
         identity = {"uid": account.pw_uid, "gid": account.pw_gid}
         changed = (
-            write_file(STATE / "config.yaml", configuration(model, max_turns), **identity)
+            write_file(
+                STATE / "config.yaml",
+                configuration(
+                    model,
+                    max_turns,
+                    github_enabled=github_app is not None,
+                    context_enabled=context is not None,
+                ),
+                **identity,
+            )
             or changed
         )
+        environment_values = {"OPENROUTER_API_KEY": provider_key, "API_SERVER_KEY": api_key}
+        if context is not None:
+            environment_values.update(
+                {"OPENVIKING_ENDPOINT": context.endpoint, "OPENVIKING_API_KEY": context.api_key}
+            )
+        key_path = STATE / "gh-app-key.pem"
+        if github_app is not None:
+            changed = self.install_github_cli() or changed
+            changed = write_file(key_path, github_app.private_key, **identity) or changed
+            changed = (
+                write_file(
+                    STATE / "github-app.json",
+                    json.dumps(
+                        {"app_id": github_app.app_id, "installation_id": github_app.installation_id}
+                    )
+                    + "\n",
+                    **identity,
+                )
+                or changed
+            )
+            environment_values.update(
+                {
+                    "GH_APP_ID": github_app.app_id,
+                    "GH_INSTALL_ID": github_app.installation_id,
+                    "GH_APP_KEY": str(key_path),
+                    # Hermes's built-in GitHub skill-source authentication uses these names.
+                    "GITHUB_APP_ID": github_app.app_id,
+                    "GITHUB_APP_INSTALLATION_ID": github_app.installation_id,
+                    "GITHUB_APP_PRIVATE_KEY_PATH": str(key_path),
+                }
+            )
+        else:
+            for path in (key_path, STATE / "github-app.json"):
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+                    changed = True
         # Hermes loads this file with python-dotenv. JSON quoting escapes quotes/backslashes.
         environment = "".join(
-            f"{name}={json.dumps(value)}\n"
-            for name, value in {
-                "OPENROUTER_API_KEY": provider_key,
-                "API_SERVER_KEY": api_key,
-            }.items()
+            f"{name}={json.dumps(value)}\n" for name, value in environment_values.items()
         )
         changed = write_file(STATE / ".env", environment, **identity) or changed
-        unit_changed = write_file(SERVICE_FILE, systemd_unit(), mode=0o644)
+        unit_changed = write_file(
+            SERVICE_FILE, systemd_unit(github_enabled=github_app is not None), mode=0o644
+        )
         if unit_changed:
             run("systemctl", "daemon-reload")
         run("systemctl", "enable", SERVICE)
@@ -262,10 +323,61 @@ class HermesWorkload:
         elif not self.running():
             run("systemctl", "start", SERVICE)
 
+    def install_github_cli(self) -> bool:
+        """Install on enable, including upgrades of an already installed workload."""
+        if not Path("/usr/bin/gh").is_file():
+            env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+            run("apt-get", "update", env=env)
+            run("apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=300", "gh", env=env)
+        binary_dir = INSTALL / "bin"
+        binary_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+        sources = Path(__file__).parent
+        changed = write_file(
+            binary_dir / "github_app.py", (sources / "github_app.py").read_text(), mode=0o644
+        )
+        changed = (
+            write_file(
+                binary_dir / "gh",
+                f"#!{SOURCE}/.venv/bin/python\n" + (sources / "github_cli.py").read_text(),
+                mode=0o755,
+            )
+            or changed
+        )
+        return (
+            write_file(
+                INSTALL / "github-path.sh", f'export PATH="{binary_dir}:$PATH"\n', mode=0o644
+            )
+            or changed
+        )
+
+    def check_github_app(self) -> int:
+        """Probe installation access without returning tokens or repository names."""
+        result = subprocess.run(
+            [
+                "/usr/sbin/runuser",
+                "-u",
+                "hermes",
+                "--",
+                str(INSTALL / "bin/gh"),
+                "api",
+                "/installation/repositories",
+                "--jq",
+                ".total_count",
+            ],
+            env={"PATH": "/usr/bin:/bin", "HOME": str(STATE)},
+            check=True,
+            timeout=90,
+            capture_output=True,
+            text=True,
+        )
+        return int(result.stdout.strip())
+
     def stop(self) -> None:
         if SERVICE_FILE.exists():
             run("systemctl", "disable", "--now", SERVICE)
         (STATE / ".env").unlink(missing_ok=True)
+        (STATE / "gh-app-key.pem").unlink(missing_ok=True)
+        (STATE / "github-app.json").unlink(missing_ok=True)
 
     def running(self) -> bool:
         return (

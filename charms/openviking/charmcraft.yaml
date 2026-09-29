@@ -1,0 +1,50 @@
+type: charm
+name: openviking
+title: OpenViking context store
+summary: A persistent OpenViking context server for related agents.
+description: |
+  Runs a pinned OpenViking server under systemd on a single Ubuntu machine.
+  Provisions isolated context identities and client credentials for related
+  applications. Initial development targets a private LXD model.
+base: ubuntu@24.04
+platforms:
+  amd64:
+parts:
+  charm:
+    plugin: uv
+    source: .
+    build-snaps: [astral-uv]
+    build-packages: [python3-dev]
+peers:
+  peers:
+    interface: openviking_peer
+provides:
+  context:
+    interface: openviking
+config:
+  options:
+    model-secret:
+      type: secret
+      description: Juju secret containing api-key for the OpenRouter embedding and extraction models.
+    embedding-model:
+      type: string
+      default: openai/text-embedding-3-small
+      description: OpenRouter embedding model. Immutable after first configuration to preserve index compatibility.
+    embedding-dimension:
+      type: int
+      default: 1536
+      description: Embedding vector dimension. Immutable after first configuration.
+    extraction-model:
+      type: string
+      default: z-ai/glm-5.3
+      description: OpenRouter model for text memory extraction and summaries.
+actions:
+  rotate-client-key:
+    description: Rotate one related application's API key while retaining its context data.
+    params:
+      relation-id:
+        type: integer
+        description: ID of the context relation whose client key should be rotated.
+    required: [relation-id]
+  check-context:
+    description: Check the local server and related client access without model requests or credential output.

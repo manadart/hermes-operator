@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.charm
+*.egg-info/
+build/
+dist/
+parts/
+stage/
+prime/
+.env
+.env.*
+*.pem
+!.env.example
+.local/

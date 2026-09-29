@@ -1,159 +1,101 @@
-# First deployment validation
+# OpenViking integration validation — 2026-09-29
 
-Recorded 2026-09-21 against the LXD controller `hermes`, model `hermes-dev`.
+Development target: controller `hermes`, model `hermes-dev`, Juju
+`4.1-beta3.1`, Ubuntu 24.04 LXD containers. Packaging used the existing
+`hermes-charm-builder` with Charmcraft 4.4.2. Both charm and workload installations
+use uv and committed dependency locks.
 
-## Deployment
+## Deployed applications
 
-| Component | Tested value |
-| --- | --- |
-| Juju client | 4.1-beta3 |
-| Juju controller and unit agent | 4.1-beta3.1 |
-| Charmcraft | 4.4.2, built inside an Ubuntu 24.04 LXD container |
-| Workload machine | Ubuntu 24.04 amd64, 2 CPU / 4 GiB memory / 20 GiB disk constraint |
-| Unit / instance | `hermes/0` / `juju-c5e4a4-0` |
-| Hermes | 0.21.3, tag `v2026.9.14` |
-| Hermes commit | `345cd2b057a452236de401d3534b8502a7465e8d` |
-| Runtime | Python 3.12, uv 0.11.6, upstream frozen lock with messaging/MCP extras |
-| Selected model | `z-ai/glm-5.3`, verified in OpenRouter's public model catalog |
-| Charm artifact | `hermes_amd64.charm`, local revision 1 |
-| Artifact SHA-256 | `d0e26620da31257b5f86ece038ac4b0d0cd295ee1e7cf1908a0b2142d66ffea3` |
+| Application | Charm revision | Workload | Machine | Purpose |
+| --- | --- | --- | --- | --- |
+| `hermes` | 4 | Hermes 0.21.3 | 0 / `10.155.5.143` | Existing agent, preserved |
+| `hermes-context` | 8 | Hermes 0.21.3 | 2 / `10.155.5.149` | New relation-capable agent |
+| `openviking` | 2 | OpenViking 0.4.22 | 1 / `10.155.5.107` | Persistent context provider |
 
-The existing controller was initially blocked by two possible database bind
-addresses. Binding `controller:dbcluster` to the `hermes-db` space containing
-`10.155.5.0/24`, then re-running its existing relation-changed handler, brought
-the controller workload to active. Other existing LXD instances were not changed.
+The two new applications are related through `context-store` / `context` and
+use `context-id=hermes-dev-context`. OpenRouter uses `z-ai/glm-5.3` for the agent
+and extraction, and `openai/text-embedding-3-small` at dimension 1536 for indexing
+and search. The user-owned OpenRouter secret was explicitly granted to each new
+application. No API key or GitHub private key was copied into the repository.
 
-The workload's first archive download received HTTP 429. Reconciliation on the
-next hook retried installation successfully. Installation remains dependent on
-external Ubuntu, GitHub, and PyPI availability; this is not an offline charm.
+## Checks completed
 
-## Passed checks
+- Independently packaged both charms; compared every packaged source file,
+  including OpenViking's workload lockfile, with the working tree.
+- Hermes: 70 unit tests passed, including existing GitHub App behavior and new
+  relation configuration, rotation, endpoint change, disconnect, and local-state
+  preservation cases. Ruff lint and formatting passed.
+- OpenViking: 18 unit tests passed, covering isolated client secrets, retry-safe
+  provisioning, duplicate identities, rotation, revocation retry, startup ordering,
+  scale rejection, immutable embedding configuration and data preservation.
+  Ruff lint and formatting passed.
+- Both charm `check-context` actions passed authenticated access checks.
+- Hermes's actual bundled `viking_remember` tool submitted a synthetic Aurora
+  Cedar project fact. The extraction task completed; a fresh provider session
+  found it through semantic search and read its exact random checklist code.
+  Native local memory files were not seeded with that fact.
+- A real GLM-5.3 conversation through the running gateway recalled the exact
+  code using `viking_read`. Automatic recall had already supplied the URI; the
+  test accepts search or read while excluding local file/terminal tools.
+- A regular client exported `viking://user/hermes/memories/` with
+  `include_vectors=false`. The ZIP stream had 13 entries and contained the fact.
+  That credential received 403 for account administration and full-server backup.
+- A separately provisioned test account received 404 reading the first account's
+  memory URI, while the primary account received 200. The test account was then
+  deleted; the agent account was retained.
+- `rotate-client-key` invalidated the former key (401); Hermes consumed the new
+  Juju secret revision and the replacement key worked (200).
+  Provider comparisons and `check-context` explicitly read the latest owned
+  secret revision; a regression test covers checks after rotation.
+- Removing the relation invalidated the current key (401), removed Hermes's
+  OpenViking environment/configuration, and left both applications active.
+  Reconnecting with the same identity restored access and semantic recall of
+  the previously stored fact.
+- With the context service deliberately stopped, Hermes reported
+  `Gateway ready; OpenViking access unavailable` and its restart action failed
+  with that status. Starting OpenViking and reconciling Hermes restored active
+  status. A fresh GLM-5.3 session then used both `viking_search` and `viking_read`
+  to recover the exact code after both services had restarted.
+- The original `hermes/0` passed its existing non-billable model-smoke persistence
+  verification, covering saved conversations and the scratch marker.
 
-- All 22 unit tests, Ruff lint, and Ruff format checks.
-- Charmcraft packaging and inspection of the built metadata, configuration,
-  actions, dependencies, and matching source files.
-- Live deployment and installation of the pinned Hermes version.
-- Missing OpenRouter configuration produces an actionable blocked status.
-- Gateway startup with a temporary, deliberately invalid provider credential;
-  no model requests were sent using it.
-- Service runs as `hermes:hermes`, with the API bound only to `127.0.0.1:8642`.
-- Public `/health` and authenticated `/health/detailed` report healthy.
-- `/v1/models` rejects missing authentication with HTTP 401 and accepts the
-  separately generated API bearer token.
-- `get-api-access` returns the loopback URL, selected model, and API secret
-  reference without returning the token itself.
-- A saved empty API session, workspace marker, and API token survive the charm's
-  `restart` action and an LXD instance restart.
-- Updating the temporary Juju secret through the helper's `--update` option
-  propagates its new revision into the workload without changing API identity
-  or deleting the saved session.
-- After reboot, the helper's new-secret workflow starts the gateway, and a
-  `max-turns` configuration change reaches the running workload.
-- Configured credential values were absent from the service journal examined
-  during these checks.
+The repeatable helpers and lifecycle procedure are in
+[tests/integration](../tests/integration/README.md). The non-secret live test report
+is `/var/lib/hermes/workspace/context-smoke.json` on `hermes-context/0`.
+The final successful gateway recall session was
+`context-recall-96d448a7a80f4a01a54dcd3b081cff11`. Both connected applications
+and the original agent were active at the end of testing. The packaging
+container was stopped; the workloads remain running.
 
-The repeatable local API and persistence check is
-[`tests/integration/smoke.py`](../tests/integration/smoke.py). Unit tests also
-cover invalid configuration, inaccessible/removed credentials, unsupported
-scaling, unchanged configuration avoiding a restart, and safe credential-file
-replacement. These unit checks do not establish live multi-unit behavior.
+## Controller refresh limitation
 
-Resetting the secret reference did not promptly produce a configuration hook
-during cleanup on this beta controller. Explicit reconciliation through the
-`restart` action confirmed that the missing credential stops the service and
-removes `.env`; the action correctly failed with the missing-secret message.
-Subsequent fresh-secret setup and configuration changes did deliver hooks.
-The event delay's cause was not established; immediate credential revocation is
-not a validated guarantee.
+Refreshing the original `hermes` from revision 4 to the relation-capable charm
+failed before changing the deployed revision:
 
-## Real model acceptance
+```text
+ERROR setting application "hermes" charm: one or more of the provided endpoints
+"context-store, juju-info, peers" do not exist
+```
 
-After the user configured the real OpenRouter secret, the first model request
-found a missing managed-home directory (`/var/lib/hermes/memories`). Hermes's
-`HERMES_MANAGED` mode requires cron, sessions, logs, and memories directories to
-exist, although the gateway can report healthy without them. Revision 1 fixes
-initialization on both installation and reconciliation of existing deployments,
-preserves existing contents, and rejects directory symlinks before privileged
-ownership changes. Two regression tests cover this behavior. The fix was built
-and applied with `juju refresh` to the existing unit.
+Retrying with `--bind alpha` produced the same error. Deploying a fresh
+`hermes-context` application succeeded, as did subsequent refreshes with an
+unchanged endpoint set. The existing agent was not replaced and its state was
+verified intact. This is a limitation observed on this development controller,
+not evidence that all Juju releases reject endpoint additions. No controller
+code or database was modified to work around it.
 
-The real API checks then passed with confirmed runtime metadata identifying
-provider `openrouter` and model `z-ai/glm-5.3`:
+## Limits and next work
 
-| Check | Evidence |
-| --- | --- |
-| Inference | Returned `HERMES_GLM_READY`, no tools, 1.10 seconds |
-| File and terminal tools | `write_file`, `terminal` running `cat`, and `read_file` all succeeded; on-disk contents matched the unique marker, 3.69 seconds |
-| Delegation | Exactly one persisted child session used GLM-5.3 and completed `17 × 19 = 323`; the parent returned `HERMES_DELEGATION_READY 323` |
+This is a single-unit, trusted-private-network experiment. Context traffic uses
+HTTP, without TLS/custom CA exchange. Storage lives on the provider machine;
+there is no HA, attachable-storage recovery or machine-loss protection.
 
-These are single-run observations, not latency benchmarks. Top-level delegation
-is asynchronous in this release: the child completion is persisted in the
-parent's session history after the initial HTTP response. The test polls that
-history and submits one parent follow-up to consume the result. A synchronous
-first response containing the finished child result is not the API contract.
-
-The successful report is retained on the workload machine at
-`/var/lib/hermes/workspace/charm-model-smoke-xvl_onju/report.json`, alongside the
-scratch file. The report names all three test sessions; the child session is
-`20260921_183323_1e6f07`. The earlier diagnostic sessions are also retained.
-No credential values are included in the report.
-
-After these requests completed and the gateway reported idle, the populated
-test sessions, exact assistant replies, tool-call history, and generated file
-were verified after both the charm's `restart` action and an LXD instance
-restart. The gateway returned to active. The real provider key and API token
-were absent from the service journal examined after these checks.
-
-The reproducible model check is
-[`tests/integration/model_smoke.py`](../tests/integration/model_smoke.py). Its
-`run` mode makes billable requests; `verify` only reads saved sessions and files.
-The successful sequence reused recorded replies with `resume` after adjusting
-the test for asynchronous completion and normal arithmetic-result wording.
-
-The first terminal probe encountered Hermes's interactive approval requirement
-for inline Python execution. The final check uses a simple `cat` command and
-asserts no tool result is pending approval. An interactive approval workflow is
-not provided by this charm.
-
-## Remaining scope
-
-A provider/model configuration change taking effect on a real inference request
-has not been tested. The deployed unit is active with the user's OpenRouter
-secret configured; temporary test provider secrets from initial deployment
-were removed.
-
-The active status and local health checks establish gateway readiness, not
-provider authorization, credit, model availability, or successful inference.
-Machine-loss recovery, backup/restore, scaling, relations, and Kubernetes remain
-outside this first deployment.
-
-## uv migration (2026-09-22)
-
-Development dependencies now live in the `dev` group in `pyproject.toml`, runtime
-dependencies live in `project.dependencies`, and `uv.lock` pins both. The two
-requirements files were removed. Python 3.12 is selected by `.python-version`.
-The existing pinned Hermes workload installer already used uv and is unchanged.
-
-Validation:
-
-- Local uv 0.11.6: `uv sync --locked`, all 22 tests through `uv run --locked`,
-  Ruff lint/format, and `uv lock --check --offline` passed.
-- A fresh Charmcraft 4.4.2 build used the native `uv` plugin with the `astral-uv`
-  snap (uv 0.12.17), the frozen lockfile, and development dependencies excluded.
-- The artifact contains exactly five runtime distributions: Ops 3.8.2, PyYAML
-  6.0.3, OpenTelemetry API 1.44.0, typing-extensions 4.16.0, and websocket-client
-  1.9.2. Its charm source matches the repository; test tools are absent.
-- Artifact SHA-256:
-  `f9e7cec930bffbb45debdce25402f77b874b4eab484533af37d639377e663939`.
-- Refreshed `hermes:hermes-dev` to local charm revision 2. Its upgrade hook
-  completed and the unit remained active/idle. The Hermes process PID and start
-  time were unchanged, confirming no workload restart was required.
-- The existing model acceptance report's `verify` check passed through the
-  authenticated API, confirming its saved replies, tool history, and scratch
-  file. No new model requests were made for this migration.
-
-## Sources
-
-- [Pinned Hermes source](https://github.com/NousResearch/hermes-agent/tree/345cd2b057a452236de401d3534b8502a7465e8d)
-- [OpenRouter model catalog](https://openrouter.ai/api/v1/models)
-- [Deployment and operational instructions](../README.md)
+The scoped export test establishes API capability, not a coordinated backup:
+it does not quiesce every agent writer or provide an atomic cross-store snapshot.
+Knowledge backup/restore, mapping an archive to a new provider, and conversion
+for a destination without OpenViking remain the next milestones in
+[PLAN.md](../PLAN.md). Full Hermes application replacement/handover and live
+provider IP changes have not been tested; endpoint changes have unit coverage.
+Image/multimodal ingestion and a live GitHub App authentication check were not
+part of these integration checks.

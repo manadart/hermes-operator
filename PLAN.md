@@ -8,6 +8,10 @@
 - Use OpenRouter as the initial model provider.
 - Start with one persistent agent identity and one Juju unit.
 - Let Hermes manage subagents within that instance.
+- Keep independently buildable Hermes and OpenViking charms in this experimental
+  repository, with a shared relation specification and integration tests.
+- Establish the OpenViking relation before implementing knowledge backup/restore,
+  so portability is tested against both local and remote knowledge.
 
 The first milestone is a deployed charm that installs and configures Hermes,
 successfully runs a model-and-tool task, and preserves its state across service
@@ -20,11 +24,18 @@ restarts and an instance reboot.
 rotation, real GLM-5.3 inference, file/terminal tools, and a child result consumed
 by its parent passed. The populated sessions and scratch file survived service
 restart and LXD reboot. Provider/model switching remains untested. See
-[docs/validation.md](docs/validation.md) for evidence and limits.
+[Hermes validation](charms/hermes/docs/validation.md) for evidence and limits.
 
 On 2026-09-22, development and charm packaging migrated to uv with dependencies
 in `pyproject.toml` and `uv.lock`. Local revision 2 was built and refreshed on the
 development unit; tests and the existing API/state checks passed.
+
+GitHub App support was added on 2026-09-22 and deployed as local revision 4.
+It manages the RSA key through a separate Juju secret, renders the `GH_APP_*`
+settings, and authenticates `gh` using a fresh installation token per invocation.
+The supplied App/installation IDs are staged on the development unit. Unit tests,
+real terminal wrapper resolution, and existing API/state checks passed; GitHub
+authentication awaits the user's private-key secret and `check-github-app` action.
 
 Use controller `hermes` and a dedicated development model named `hermes-dev`.
 Explicitly target `hermes:hermes-dev` in deployment and test commands. Install
@@ -124,18 +135,168 @@ reconciliation, plus a repeatable live smoke-test procedure. Record which checks
 actually ran and the model and Hermes versions used.
 
 Restart and reboot persistence do not establish recovery after unit removal or
-machine loss. Define and validate backup/restore and any attachable-storage
-requirements as a subsequent lifecycle milestone.
+machine loss. Establish remote context ownership through the OpenViking relation
+first, then validate knowledge backup/restore across both stores. Full state
+recovery and attachable-storage requirements remain later work.
 
-## 5. Add the first relation
+## 5. Restructure the repository
 
-After the installation milestone works, implement an MCP relation against a
-small test tool service with an observable result. Define endpoint discovery,
-authentication, credential rotation, and removal behavior on both ends.
+**Implemented on 2026-09-29.** Separate build contexts preserve the Hermes charm
+name and workload paths. Existing Hermes tests and packaging passed after the move:
 
-COS integration follows as the next operational improvement. A2A specialists,
-external memory, distributed workers, high availability, and a Kubernetes charm
-remain later milestones with their own lifecycle requirements.
+```text
+charms/
+  hermes/             # Existing charm, dependency lock, tests, scripts, and README
+  openviking/         # Independently buildable OpenViking charm
+interfaces/
+  openviking/         # Versioned relation specification and schemas
+tests/
+  integration/        # Tests exercising both charms
+README.md             # Overall architecture and deployment instructions
+PLAN.md
+```
+
+Keep each charm's `charmcraft.yaml`, `pyproject.toml`, `uv.lock`, source, and unit
+tests together. Hermes-specific smoke tests remain with Hermes. Update build,
+test, and documentation paths while preserving the charm name and workload
+paths. Verify the existing Hermes tests and packaging after the move.
+
+## 6. OpenViking charm and relation
+
+**Implemented and deployed on 2026-09-29.** OpenViking 0.4.22 is running with
+the new `hermes-context` development application in `hermes:hermes-dev`. The
+original `hermes` remains active at revision 4: this controller rejected adding
+the new endpoint during refresh, including a retry with an explicit binding.
+Existing Hermes persistence checks still pass. See [integration validation](docs/validation.md)
+for the controller error and measured integration results.
+
+The implemented interface uses isolated accounts, regular-user Juju secrets,
+stable context IDs, credential rotation, retained data on disconnect, and
+Hermes's existing provider. The initial transport is HTTP on the trusted private
+LXD network; TLS/custom CA exchange is deferred. Storage is persistent on the
+machine but has no machine-loss recovery yet.
+
+Live extraction, semantic recall, real GLM-5.3 tool-based recall, scoped export,
+account isolation, rotation, disconnect/reconnect retention and service-outage
+recovery passed. There are 88 passing unit tests across both charms. Full
+application replacement and live endpoint/IP changes remain untested; endpoint
+changes have unit coverage. Backup/restore is now the next implementation step.
+
+Build a minimal single-unit OpenViking machine charm on LXD, using a pinned
+release in its own environment, an unprivileged systemd service, and persistent
+storage. Manage its embedding/extraction model configuration and credentials
+separately from the Hermes workload. Clustering and high availability are later
+scope.
+
+Define a versioned `openviking` interface between the
+`hermes:context-store` consumer and `openviking:context` provider. Configure
+Hermes's existing HTTP memory provider from relation data: endpoint, a Juju
+secret reference for a dedicated client key, stable context identity, protocol
+compatibility, and TLS trust where required. Support one external memory
+relation per Hermes application initially.
+
+Establish these lifecycle and portability requirements before backup work:
+
+- OpenViking owns remote context storage and its recovery; Hermes retains local
+  memory, skills, persona, and its independently managed credentials.
+- Client identity survives unit replacement and deliberate reconnection to
+  existing context. Do not derive durable identity solely from a unit name or
+  relation ID.
+- Isolate each Hermes application's context by default. Shared resources and
+  permitted export scopes are explicit choices; do not grant a consumer the
+  server's root credential.
+- Rotate client credentials and reconcile endpoint changes through the relation.
+  Removing a relation revokes access and disconnects the provider without
+  deleting accumulated context.
+- Define how pending conversation synchronization and asynchronous memory
+  extraction are drained or reported before a consistent export. Connection
+  health alone does not establish that knowledge has been stored.
+
+Acceptance checks:
+
+- Deploy and relate both charms on LXD; verify authenticated access and the
+  rendered Hermes provider settings.
+- Store representative knowledge through Hermes, wait for extraction, and
+  verify retrieval in a fresh session.
+- Restart or replace the Hermes instance and verify recall using the same
+  context identity.
+- Verify credential rotation, isolation between consumers, endpoint changes,
+  and relation removal retaining remote data.
+- Verify that provider failures are reported and are distinguishable from
+  gateway health; establish the scoped export capability needed by milestone 7.
+
+## 7. Next step: knowledge backup and restore across both stores
+
+**Follows the OpenViking milestone; not yet implemented.** Add `backup` and
+`restore` actions to move an agent's accumulated knowledge onto a fresh Hermes
+deployment. Preserve support for deployments with only local knowledge.
+
+The local scope is an explicit allowlist under `HERMES_HOME`: `memories/`,
+`skills/`, and `SOUL.md` if present. Include an optional OpenViking export scoped
+to the agent's knowledge and explicitly selected shared resources. Exclude
+session databases and transcripts, workspace files, scheduled jobs, runtime
+files, and charm-managed configuration and credentials from both scopes. The
+destination retains its own Juju configuration, OpenRouter secret, GitHub App
+key, API identity, and relation credentials.
+
+Action behavior:
+
+- `backup` creates a protected archive with a manifest recording the knowledge
+  scopes, archive format version, Hermes/OpenViking versions, source identities,
+  and file checksums. Coordinate local writes and pending remote extraction for
+  a consistent export, then restore the prior service state. Return the archive
+  path and checksum for manual retrieval off the unit. Requested remote content
+  that cannot be exported must fail or explicitly mark the result incomplete;
+  never silently report a complete backup.
+- `restore` accepts a staged archive, validates its contents, paths, checksums,
+  and version compatibility before changing state, and requires an explicit
+  replacement option when destination knowledge already exists. Stop Hermes
+  during local replacement, preserve a rollback copy, restore service-user
+  ownership and permissions, then restart and check health. For an OpenViking
+  destination, import into the destination identity and verify retrieval. Define
+  recovery from a partial restore across the two stores and avoid duplicate
+  imports when reconnecting to the original context.
+
+Acceptance checks:
+
+- Back up representative memory, a skill with supporting files, and optional
+  persona content; restore into a fresh Hermes home and verify Hermes can read
+  the memory and discover the skill.
+- Export remote knowledge and restore it to a fresh OpenViking-backed deployment;
+  verify recall, identity mapping, and completion of any required reindexing.
+- Verify excluded files never enter the archive and destination configuration,
+  credentials, sessions, workspace, and scheduled jobs remain intact.
+- Reject corrupt or incompatible archives and unsafe paths or links without
+  modifying destination knowledge; verify replacement and rollback behavior.
+- Exercise the actions on LXD and document manual archive transfer and any
+  external tools, repositories, or paths needed by restored skills.
+
+Conversation continuity, workspace recovery, scheduled-job migration, automated
+retention, and an object-storage relation are follow-up scope.
+
+## 8. Restore exported knowledge without OpenViking
+
+Extend restore with an explicit conversion path for a destination that has no
+OpenViking relation. Preserve the original provider export alongside converted
+local documents, provenance, and a retrieval skill or index that makes the
+knowledge discoverable. Keep native memory bounded; do not silently truncate a
+remote corpus or claim that local retrieval reproduces OpenViking's semantic
+search and extraction behavior.
+
+Acceptance: export an OpenViking-backed agent, restore onto a fresh Hermes
+instance with no access to the source service, and verify retrieval of
+representative exported knowledge. Report content that could not be converted
+and preserve it in the original export. Destination credentials remain intact.
+
+## 9. Later integrations
+
+An MCP relation can follow against a small test tool service with an observable
+result. Define endpoint discovery, authentication, credential rotation, and
+removal behavior on both ends.
+
+COS integration, additional memory providers, A2A specialists, distributed
+workers, high availability, and a Kubernetes charm remain later milestones with
+their own lifecycle requirements.
 
 ## Initial repository deliverables
 
